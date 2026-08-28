@@ -19,9 +19,11 @@ export const inject = ['timer', 'slots']
 
 const ROUTE = '/provider-balance/balance'
 
-// ── 设置 scope：enabled 开关 + interval 刷新间隔 ──
+// ── 设置 scope：enabled 开关 + interval 余额刷新间隔 + providerCheckSec 选中检测间隔 ──
+const DEFAULT_PREFS = { enabled: true, interval: 60, providerCheckSec: 5 }
+
 function useBalancePrefs(scope) {
-  const [prefs, setPrefs] = React.useState({ enabled: true, interval: 60 })
+  const [prefs, setPrefs] = React.useState(DEFAULT_PREFS)
   React.useEffect(() => {
     if (!scope) return undefined
     const read = () => {
@@ -30,6 +32,7 @@ function useBalancePrefs(scope) {
         setPrefs({
           enabled: snap.value.enabled !== false,
           interval: Number(snap.value.interval) || 60,
+          providerCheckSec: Number(snap.value.providerCheckSec) || 5,
         })
       }
     }
@@ -42,12 +45,11 @@ function useBalancePrefs(scope) {
 // ── 当前对话栏选中的供应商 ──
 // useSessions 是 root-scope slot 的 GlobalStandardProps hook，必须在渲染期调用；
 // connection.api.sessions.models({sessionId}) 返回 {current: {provider, model}, groups}。
-// 客户端没有"模型已切换"事件，采用独立短周期轮询（MODEL_CHECK_MS）：
-// 选完模型最多 5 秒内更新；点击悬浮球（recheck）立即重查。
+// 客户端没有"模型已切换"事件，采用独立短周期轮询（providerCheckSec 秒，设置页可调）：
+// 选完模型最多一个周期内更新；点击悬浮球（recheck）立即重查。
 // 返回 { current, diag, recheck }——diag 描述检测链路状态，供展开面板自诊断。
-const MODEL_CHECK_MS = 5_000
 
-function useCurrentProvider(sessionId, hasSessionsHook, ctx) {
+function useCurrentProvider(sessionId, hasSessionsHook, ctx, checkSec) {
   const [current, setCurrent] = React.useState(null) // { provider, model, label }
   const [diag, setDiag] = React.useState({ step: 'idle', detail: null })
   const [tick, setTick] = React.useState(0)
@@ -98,9 +100,9 @@ function useCurrentProvider(sessionId, hasSessionsHook, ctx) {
         })
     }
     check()
-    const disposer = ctx.interval(check, MODEL_CHECK_MS)
+    const disposer = ctx.interval(check, Math.max(2, checkSec) * 1000)
     return () => { cancelled = true; if (typeof disposer === 'function') disposer() }
-  }, [sessionId, hasSessionsHook, ctx, tick])
+  }, [sessionId, hasSessionsHook, ctx, checkSec, tick])
 
   return { current, diag, recheck: () => setTick((t) => t + 1) }
 }
@@ -143,7 +145,7 @@ function BalanceBadge({ scope, ctx, useSessions }) {
   const { state, prefs, refresh } = useBalances(scope, ctx)
   // useSessions 必须在渲染期调用（Rules of Hooks）：root scope slot 保证提供该 prop
   const list = useSessions ? useSessions((s) => s) : undefined
-  const { current, diag, recheck } = useCurrentProvider(list?.current, Boolean(useSessions), ctx)
+  const { current, diag, recheck } = useCurrentProvider(list?.current, Boolean(useSessions), ctx, prefs.providerCheckSec)
   const [open, setOpen] = React.useState(false)
   if (!prefs.enabled) return null
 
@@ -305,6 +307,21 @@ function BalanceSettingsSection({ scope }) {
         style: { width: 80 },
         onChange: (e) => set('interval', Math.max(15, Number(e.target.value) || 60)),
       }),
+    ),
+    React.createElement(
+      'label',
+      { style: { display: 'flex', alignItems: 'center', gap: 8, marginTop: 12, fontSize: 14 } },
+      React.createElement('span', null, '选中检测间隔（秒）：'),
+      React.createElement('input', {
+        type: 'number', min: 2, max: 120, value: prefs.providerCheckSec,
+        style: { width: 80 },
+        onChange: (e) => set('providerCheckSec', Math.max(2, Number(e.target.value) || 5)),
+      }),
+      React.createElement(
+        'span',
+        { style: { fontSize: 12, opacity: 0.65 } },
+        '切换模型后多久更新悬浮球',
+      ),
     ),
     !scope &&
       React.createElement(

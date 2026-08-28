@@ -82,12 +82,13 @@ function adapterFor(id) {
 export const inject = ['credentials', 'webServer', 'tools', 'settings']
 
 export function apply(ctx) {
-  // ── 设置命名空间：enabled + interval（持久化到 settings.yaml） ──
+  // ── 设置命名空间：enabled + interval（余额刷新间隔）+ providerCheckSec（选中检测间隔） ──
   ctx.settings.register(
     settingsNamespace('provider-balance'),
     Schema.object({
       enabled: Schema.boolean().default(true),
       interval: Schema.number().min(15).max(3600).default(60),
+      providerCheckSec: Schema.number().min(2).max(120).default(5),
     }),
   )
 

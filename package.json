@@ -1,0 +1,33 @@
+{
+  "name": "provider-balance",
+  "version": "0.2.0",
+  "description": "AI 供应商余额悬浮球：实时显示所有已配置供应商的余额，支持开关与刷新间隔配置",
+  "type": "module",
+  "main": "src/index.js",
+  "scripts": {
+    "build:client": "node build-client.mjs"
+  },
+  "exports": {
+    ".": "./src/index.js",
+    "./client": "./lib/client.js",
+    "./package.json": "./package.json"
+  },
+  "dsh": {
+    "client": {
+      "platform": "web"
+    }
+  },
+  "files": [
+    "src",
+    "lib"
+  ],
+  "dependencies": {
+    "@deepseek-ai/dsh-credentials": "^0.1.1-rc.2",
+    "@deepseek-ai/dsh-settings": "^0.1.1-rc.2",
+    "@deepseek-ai/dsh-tools": "^0.1.1-rc.2",
+    "@deepseek-ai/schemastery": "^3.18.1"
+  },
+  "devDependencies": {
+    "esbuild": "^0.24.0"
+  }
+}

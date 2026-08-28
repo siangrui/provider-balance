@@ -1,0 +1,10 @@
+# dependencies
+node_modules/
+
+# build intermediates (lib/client.js 是发布产物，保留提交)
+lib/client.cjs
+lib/client.js.map
+
+# logs & os
+*.log
+.DS_Store

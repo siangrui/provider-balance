@@ -40,37 +40,36 @@ function useBalancePrefs(scope) {
 }
 
 // ── 当前对话栏选中的供应商 ──
-// useSessions 是 root-scope slot 的 GlobalStandardProps hook，返回 SessionListState。
+// useSessions 是 root-scope slot 的 GlobalStandardProps hook，必须在渲染期调用；
 // connection.api.sessions.models({sessionId}) 返回 {current: {provider, model}, groups}。
-function useCurrentProvider(useSessions, ctx) {
+function useCurrentProvider(sessionId, ctx) {
   const [current, setCurrent] = React.useState(null) // { provider, model, label }
 
   React.useEffect(() => {
-    if (!useSessions) return undefined
-    const list = useSessions((s) => s)
-    const sessionId = list?.current
-    if (!sessionId) return
+    if (!sessionId) return undefined
 
     let cancelled = false
     const connection = ctx.get('connection')
     const sessionsFace = connection?.api?.sessions
-    if (!sessionsFace?.models) return
+    if (!sessionsFace?.models) return undefined
 
-    sessionsFace.models({ sessionId }).then(({ result }) => {
-      if (cancelled || !result?.ok) return
-      const { current: sel, groups } = result.value
-      if (!sel?.provider) return
-      // 从 groups 找显示名
-      const group = groups?.find((g) => g.id === sel.provider)
-      setCurrent({
-        provider: sel.provider,
-        model: sel.model,
-        label: group?.name ?? sel.provider,
+    sessionsFace.models({ sessionId })
+      .then(({ result }) => {
+        if (cancelled || !result?.ok) return
+        const { current: sel, groups } = result.value
+        if (!sel?.provider) return
+        // 从 groups 找显示名
+        const group = groups?.find((g) => g.id === sel.provider)
+        setCurrent({
+          provider: sel.provider,
+          model: sel.model,
+          label: group?.name ?? sel.provider,
+        })
       })
-    }).catch(() => {})
+      .catch(() => {})
 
     return () => { cancelled = true }
-  }, [useSessions, ctx])
+  }, [sessionId, ctx])
 
   return current
 }
@@ -111,7 +110,9 @@ function useBalances(scope, ctx) {
 // ── 悬浮球（shell.overlay） ──
 function BalanceBadge({ scope, ctx, useSessions }) {
   const { state, prefs, refresh } = useBalances(scope, ctx)
-  const current = useCurrentProvider(useSessions, ctx)
+  // useSessions 必须在渲染期调用（Rules of Hooks）：root scope slot 保证提供该 prop
+  const list = useSessions ? useSessions((s) => s) : undefined
+  const current = useCurrentProvider(list?.current, ctx)
   const [open, setOpen] = React.useState(false)
   if (!prefs.enabled) return null
 

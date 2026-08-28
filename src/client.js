@@ -2,10 +2,12 @@
  * provider-balance — 客户端半区（浏览器侧）· 多供应商版
  *
  * 三个 UI 注册点：
- *  1. shell.overlay        → 右下角悬浮球：显示"最近被扣钱"供应商的余额，点击展开全部供应商面板
+ *  1. shell.overlay        → 右下角悬浮球：显示当前对话栏选中的供应商余额，点击展开全部供应商面板
  *  2. sidebar.footer.action → 侧边栏底部快捷开关
- *  3. settings.section      → 设置面板"余额显示"页（开关 + 刷新间隔，持久化）
+ *  3. settings.section      → 设置面板「供应商余额」页（开关 + 刷新间隔，持久化）
  *
+ * "当前选中供应商"通过 useSessions（GlobalStandardProps）拿 current sessionId，
+ * 再调 connection.api.sessions.models() 获取 {current: {provider, model}, groups}。
  * 数据经宿主路由 /provider-balance/balance 获取（key 永不进浏览器）。
  * 显式 React.createElement，避免 JSX/默认导出互操作风险。
  */
@@ -37,11 +39,47 @@ function useBalancePrefs(scope) {
   return prefs
 }
 
+// ── 当前对话栏选中的供应商 ──
+// useSessions 是 root-scope slot 的 GlobalStandardProps hook，返回 SessionListState。
+// connection.api.sessions.models({sessionId}) 返回 {current: {provider, model}, groups}。
+function useCurrentProvider(useSessions, ctx) {
+  const [current, setCurrent] = React.useState(null) // { provider, model, label }
+
+  React.useEffect(() => {
+    if (!useSessions) return undefined
+    const list = useSessions((s) => s)
+    const sessionId = list?.current
+    if (!sessionId) return
+
+    let cancelled = false
+    const connection = ctx.get('connection')
+    const sessionsFace = connection?.api?.sessions
+    if (!sessionsFace?.models) return
+
+    sessionsFace.models({ sessionId }).then(({ result }) => {
+      if (cancelled || !result?.ok) return
+      const { current: sel, groups } = result.value
+      if (!sel?.provider) return
+      // 从 groups 找显示名
+      const group = groups?.find((g) => g.id === sel.provider)
+      setCurrent({
+        provider: sel.provider,
+        model: sel.model,
+        label: group?.name ?? sel.provider,
+      })
+    }).catch(() => {})
+
+    return () => { cancelled = true }
+  }, [useSessions, ctx])
+
+  return current
+}
+
 // ── 多供应商余额：初始加载 + interval 轮询 + 手动刷新 ──
 function useBalances(scope, ctx) {
   const prefs = useBalancePrefs(scope)
   const [state, setState] = React.useState({
-    providers: null, lastUsed: null, error: null, loading: false,
+    providers: null, error: null, loading: false,
   })
 
   const load = React.useCallback((force) => {
@@ -50,10 +88,7 @@ function useBalances(scope, ctx) {
       .then((r) => r.json())
       .then((data) => {
         if (data && Array.isArray(data.providers)) {
-          setState({
-            providers: data.providers, lastUsed: data.lastUsed ?? null,
-            error: null, loading: false,
-          })
+          setState({ providers: data.providers, error: null, loading: false })
         } else {
           setState((s) => ({ ...s, error: (data && data.error) || 'unknown', loading: false }))
         }
@@ -74,21 +109,24 @@ function useBalances(scope, ctx) {
 }
 
 // ── 悬浮球（shell.overlay） ──
-function BalanceBadge({ scope, ctx }) {
+function BalanceBadge({ scope, ctx, useSessions }) {
   const { state, prefs, refresh } = useBalances(scope, ctx)
+  const current = useCurrentProvider(useSessions, ctx)
   const [open, setOpen] = React.useState(false)
   if (!prefs.enabled) return null
 
   const providers = state.providers ?? []
-  // 优先"最近被扣钱"的供应商，其次第一个有余额的，再次第一个
+  // 优先当前选中供应商，其次第一个有余额的，再次第一个
   const active =
-    providers.find((p) => p.provider === state.lastUsed) ||
+    providers.find((p) => p.provider === current?.provider) ||
     providers.find((p) => p.ok) ||
     providers[0]
 
   const label = active
     ? `${active.label} ${active.ok ? `${active.currency} ${active.balance.toFixed(2)}` : active.error}`
     : state.loading ? '余额…' : (state.error ? '余额 ?' : '--')
+
+  const highlightId = current?.provider
 
   const rows = (providers.length ? providers : [{ label: '—', error: state.error || '加载中' }]).map((p) =>
     React.createElement(
@@ -98,11 +136,11 @@ function BalanceBadge({ scope, ctx }) {
         style: {
           display: 'flex', justifyContent: 'space-between', gap: 16,
           padding: '4px 0', fontSize: 13,
-          opacity: state.lastUsed === p.provider ? 1 : 0.85,
-          fontWeight: state.lastUsed === p.provider ? 600 : 400,
+          opacity: highlightId === p.provider ? 1 : 0.85,
+          fontWeight: highlightId === p.provider ? 600 : 400,
         },
       },
-      React.createElement('span', null, p.label + (state.lastUsed === p.provider ? ' ◂' : '')),
+      React.createElement('span', null, p.label + (highlightId === p.provider ? ' ◂' : '')),
       React.createElement(
         'span',
         { style: { fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace', color: p.ok ? undefined : '#e0a45c' } },
@@ -202,7 +240,7 @@ function BalanceSettingsSection({ scope }) {
     React.createElement(
       'p',
       { style: { fontSize: 12, opacity: 0.75, margin: '0 0 12px' } },
-      '悬浮球显示最近使用的供应商余额；点击展开全部供应商（无余额 API 的显示 n/a）。供应商列表自动跟随 Settings > Model。',
+      '悬浮球显示当前对话栏选中的供应商余额；点击展开全部供应商（无余额 API 的显示 n/a）。供应商列表自动跟随 Settings > Model。',
     ),
     React.createElement(
       'label',
@@ -240,7 +278,7 @@ export function apply(ctx) {
 
   ctx.slots.inject('shell.overlay', () => ctx.slots.register(
     { name: 'shell.overlay', id: 'provider-balance.badge' },
-    () => React.createElement(BalanceBadge, { scope, ctx }),
+    (props) => React.createElement(BalanceBadge, { scope, ctx, ...props }),
   ))
 
   ctx.slots.inject('sidebar.footer.action', () => ctx.slots.register(

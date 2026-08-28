@@ -91,13 +91,6 @@ export function apply(ctx) {
     }),
   )
 
-  // ── 最近被扣钱的供应商：监听 llm/stream 瀑布（每次模型调用都经过） ──
-  let lastUsed = null // { provider, at }
-  ctx.on('llm/stream', (options, next) => {
-    if (options?.provider) lastUsed = { provider: options.provider, at: Date.now() }
-    return next()
-  })
-
   // ── 供应商列表：自动跟随 Settings > Model ──
   function providerList() {
     const list = []
@@ -155,7 +148,7 @@ export function apply(ctx) {
         return value
       }),
     )
-    return { providers, lastUsed: lastUsed?.provider ?? null }
+    return { providers }
   }
 
   // ── HTTP 路由：客户端悬浮球数据源 ──
@@ -187,13 +180,12 @@ export function apply(ctx) {
       render: (_args, value) => [{ type: 'text', text: value }],
     },
     async execute(_args, _exec) {
-      const { providers, lastUsed } = await getBalances(true)
-      const lines = providers.map((p) => {
-        const used = lastUsed === p.provider ? ' ← 最近使用' : ''
-        return p.ok
-          ? `${p.label}  ${p.currency} ${p.balance.toFixed(2)}${used}`
-          : `${p.label}  ${p.error}${used}`
-      })
+      const { providers } = await getBalances(true)
+      const lines = providers.map((p) =>
+        p.ok
+          ? `${p.label}  ${p.currency} ${p.balance.toFixed(2)}`
+          : `${p.label}  ${p.error}`,
+      )
       return `AI 供应商余额：\n${lines.join('\n')}`
     },
   }))

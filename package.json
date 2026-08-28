@@ -2,6 +2,10 @@
   "name": "provider-balance",
   "version": "0.2.0",
   "description": "AI 供应商余额悬浮球：实时显示所有已配置供应商的余额，支持开关与刷新间隔配置",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/siangrui/provider-balance.git"
+  },
   "type": "module",
   "main": "src/index.js",
   "scripts": {

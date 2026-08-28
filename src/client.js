@@ -42,36 +42,63 @@ function useBalancePrefs(scope) {
 // ── 当前对话栏选中的供应商 ──
 // useSessions 是 root-scope slot 的 GlobalStandardProps hook，必须在渲染期调用；
 // connection.api.sessions.models({sessionId}) 返回 {current: {provider, model}, groups}。
-function useCurrentProvider(sessionId, ctx) {
+// 并入轮询周期（refreshMs）自愈：首次检查失败/竞态也会在下个周期恢复。
+// 返回 { current, diag }——diag 描述检测链路状态，供展开面板自诊断。
+function useCurrentProvider(sessionId, hasSessionsHook, ctx, refreshMs) {
   const [current, setCurrent] = React.useState(null) // { provider, model, label }
+  const [diag, setDiag] = React.useState({ step: 'idle', detail: null })
 
   React.useEffect(() => {
-    if (!sessionId) return undefined
+    if (!hasSessionsHook) {
+      setDiag({ step: 'no-hook', detail: 'useSessions prop 未注入' })
+      return undefined
+    }
+    if (!sessionId) {
+      setDiag({ step: 'no-session', detail: '会话列表 current 为空' })
+      return undefined
+    }
 
-    let cancelled = false
     const connection = ctx.get('connection')
     const sessionsFace = connection?.api?.sessions
-    if (!sessionsFace?.models) return undefined
+    if (!sessionsFace?.models) {
+      setDiag({ step: 'no-api', detail: 'connection.api.sessions 不可用' })
+      return undefined
+    }
 
-    sessionsFace.models({ sessionId })
-      .then(({ result }) => {
-        if (cancelled || !result?.ok) return
-        const { current: sel, groups } = result.value
-        if (!sel?.provider) return
-        // 从 groups 找显示名
-        const group = groups?.find((g) => g.id === sel.provider)
-        setCurrent({
-          provider: sel.provider,
-          model: sel.model,
-          label: group?.name ?? sel.provider,
+    let cancelled = false
+    const check = () => {
+      sessionsFace.models({ sessionId })
+        .then(({ result }) => {
+          if (cancelled) return
+          if (!result?.ok) {
+            setDiag({ step: 'rpc-fail', detail: result?.error?.code ?? 'unknown' })
+            return
+          }
+          const { current: sel, groups } = result.value
+          if (!sel?.provider) {
+            setDiag({ step: 'no-selection', detail: 'session.models current 为空' })
+            setCurrent(null)
+            return
+          }
+          // 从 groups 找显示名
+          const group = groups?.find((g) => g.id === sel.provider)
+          setCurrent({
+            provider: sel.provider,
+            model: sel.model,
+            label: group?.name ?? sel.provider,
+          })
+          setDiag({ step: 'ok', detail: `${sel.provider} / ${sel.model}` })
         })
-      })
-      .catch(() => {})
+        .catch((e) => {
+          if (!cancelled) setDiag({ step: 'throw', detail: String(e?.message ?? e) })
+        })
+    }
+    check()
+    const disposer = ctx.interval(check, Math.max(15, refreshMs) * 1000)
+    return () => { cancelled = true; if (typeof disposer === 'function') disposer() }
+  }, [sessionId, hasSessionsHook, ctx, refreshMs])
 
-    return () => { cancelled = true }
-  }, [sessionId, ctx])
-
-  return current
+  return { current, diag }
 }
 
 // ── 多供应商余额：初始加载 + interval 轮询 + 手动刷新 ──
@@ -112,7 +139,7 @@ function BalanceBadge({ scope, ctx, useSessions }) {
   const { state, prefs, refresh } = useBalances(scope, ctx)
   // useSessions 必须在渲染期调用（Rules of Hooks）：root scope slot 保证提供该 prop
   const list = useSessions ? useSessions((s) => s) : undefined
-  const current = useCurrentProvider(list?.current, ctx)
+  const { current, diag } = useCurrentProvider(list?.current, Boolean(useSessions), ctx, prefs.interval)
   const [open, setOpen] = React.useState(false)
   if (!prefs.enabled) return null
 
@@ -184,6 +211,16 @@ function BalanceBadge({ scope, ctx, useSessions }) {
             state.loading ? '刷新中…' : '⟳ 刷新',
           ),
           state.error && React.createElement('span', { style: { fontSize: 11, color: '#e0a45c' } }, state.error),
+        ),
+        React.createElement(
+          'div',
+          {
+            style: {
+              marginTop: 6, paddingTop: 6, borderTop: '1px solid rgba(255,255,255,0.08)',
+              fontSize: 11, opacity: 0.65, fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace',
+            },
+          },
+          `选中: ${current ? `${current.label} (${current.model})` : diag.step === 'ok' ? '无' : `${diag.step}: ${diag.detail ?? ''}`}`,
         ),
       ),
     React.createElement(

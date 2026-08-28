@@ -42,11 +42,15 @@ function useBalancePrefs(scope) {
 // ── 当前对话栏选中的供应商 ──
 // useSessions 是 root-scope slot 的 GlobalStandardProps hook，必须在渲染期调用；
 // connection.api.sessions.models({sessionId}) 返回 {current: {provider, model}, groups}。
-// 并入轮询周期（refreshMs）自愈：首次检查失败/竞态也会在下个周期恢复。
-// 返回 { current, diag }——diag 描述检测链路状态，供展开面板自诊断。
-function useCurrentProvider(sessionId, hasSessionsHook, ctx, refreshMs) {
+// 客户端没有"模型已切换"事件，采用独立短周期轮询（MODEL_CHECK_MS）：
+// 选完模型最多 5 秒内更新；点击悬浮球（recheck）立即重查。
+// 返回 { current, diag, recheck }——diag 描述检测链路状态，供展开面板自诊断。
+const MODEL_CHECK_MS = 5_000
+
+function useCurrentProvider(sessionId, hasSessionsHook, ctx) {
   const [current, setCurrent] = React.useState(null) // { provider, model, label }
   const [diag, setDiag] = React.useState({ step: 'idle', detail: null })
+  const [tick, setTick] = React.useState(0)
 
   React.useEffect(() => {
     if (!hasSessionsHook) {
@@ -94,11 +98,11 @@ function useCurrentProvider(sessionId, hasSessionsHook, ctx, refreshMs) {
         })
     }
     check()
-    const disposer = ctx.interval(check, Math.max(15, refreshMs) * 1000)
+    const disposer = ctx.interval(check, MODEL_CHECK_MS)
     return () => { cancelled = true; if (typeof disposer === 'function') disposer() }
-  }, [sessionId, hasSessionsHook, ctx, refreshMs])
+  }, [sessionId, hasSessionsHook, ctx, tick])
 
-  return { current, diag }
+  return { current, diag, recheck: () => setTick((t) => t + 1) }
 }
 
 // ── 多供应商余额：初始加载 + interval 轮询 + 手动刷新 ──
@@ -139,9 +143,11 @@ function BalanceBadge({ scope, ctx, useSessions }) {
   const { state, prefs, refresh } = useBalances(scope, ctx)
   // useSessions 必须在渲染期调用（Rules of Hooks）：root scope slot 保证提供该 prop
   const list = useSessions ? useSessions((s) => s) : undefined
-  const { current, diag } = useCurrentProvider(list?.current, Boolean(useSessions), ctx, prefs.interval)
+  const { current, diag, recheck } = useCurrentProvider(list?.current, Boolean(useSessions), ctx)
   const [open, setOpen] = React.useState(false)
   if (!prefs.enabled) return null
+
+  const toggleOpen = () => { setOpen((v) => !v); recheck() }
 
   const providers = state.providers ?? []
   // 优先当前选中供应商，其次第一个有余额的，再次第一个
@@ -207,7 +213,7 @@ function BalanceBadge({ scope, ctx, useSessions }) {
           { style: { marginTop: 8, display: 'flex', justifyContent: 'space-between', alignItems: 'center' } },
           React.createElement(
             'button',
-            { onClick: () => refresh(), style: { background: 'transparent', border: 'none', color: '#6ab0f3', cursor: 'pointer', fontSize: 12, padding: 0 } },
+            { onClick: () => { refresh(); recheck() }, style: { background: 'transparent', border: 'none', color: '#6ab0f3', cursor: 'pointer', fontSize: 12, padding: 0 } },
             state.loading ? '刷新中…' : '⟳ 刷新',
           ),
           state.error && React.createElement('span', { style: { fontSize: 11, color: '#e0a45c' } }, state.error),
@@ -226,7 +232,7 @@ function BalanceBadge({ scope, ctx, useSessions }) {
     React.createElement(
       'div',
       {
-        onClick: () => setOpen((v) => !v),
+        onClick: toggleOpen,
         title: '点击展开/收起全部供应商余额',
         style: {
           pointerEvents: 'auto', cursor: 'pointer', userSelect: 'none',
